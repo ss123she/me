@@ -1,60 +1,98 @@
-import './style.css'
-import heroImg from './assets/hero.png'
-import typescriptLogo from './assets/typescript.svg'
-import viteLogo from './assets/vite.svg'
-import { setupCounter } from './counter.ts'
+import { tgpu, d } from 'typegpu';
+import { defineControls } from './defineControls';
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-<section id="center">
-  <div class="hero">
-    <img src="${heroImg}" class="base" width="170" height="179">
-    <img src="${typescriptLogo}" class="framework" alt="TypeScript logo"/>
-    <img src="${viteLogo}" class="vite" alt="Vite logo" />
-  </div>
-  <div>
-    <h1>Get started</h1>
-    <p>Edit <code>src/main.ts</code> and save to test <code>HMR</code></p>
-  </div>
-  <button id="counter" type="button" class="counter"></button>
-</section>
+const root = await tgpu.init();
+const canvas = document.createElement('canvas');
+document.body.append(canvas);
+const context = root.configureContext({ canvas, alphaMode: 'premultiplied' });
 
-<div class="ticks"></div>
+const colors = {
+  bottomLeft: d.vec4f(1, 0, 0, 1),
+  bottomRight: d.vec4f(0, 1, 0, 1),
+  topRight: d.vec4f(0, 0, 1, 1),
+  topLeft: d.vec4f(1, 1, 0, 1),
+};
 
-<section id="next-steps">
-  <div id="docs">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#documentation-icon"></use></svg>
-    <h2>Documentation</h2>
-    <p>Your questions, answered</p>
-    <ul>
-      <li>
-        <a href="https://vite.dev/" target="_blank">
-          <img class="logo" src="${viteLogo}" alt="" />
-          Explore Vite
-        </a>
-      </li>
-      <li>
-        <a href="https://www.typescriptlang.org" target="_blank">
-          <img class="button-icon" src="${typescriptLogo}" alt="">
-          Learn more
-        </a>
-      </li>
-    </ul>
-  </div>
-  <div id="social">
-    <svg class="icon" role="presentation" aria-hidden="true"><use href="/icons.svg#social-icon"></use></svg>
-    <h2>Connect with us</h2>
-    <p>Join the Vite community</p>
-    <ul>
-      <li><a href="https://github.com/vitejs/vite" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#github-icon"></use></svg>GitHub</a></li>
-      <li><a href="https://chat.vite.dev/" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#discord-icon"></use></svg>Discord</a></li>
-      <li><a href="https://x.com/vite_js" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#x-icon"></use></svg>X.com</a></li>
-      <li><a href="https://bsky.app/profile/vite.dev" target="_blank"><svg class="button-icon" role="presentation" aria-hidden="true"><use href="/icons.svg#bluesky-icon"></use></svg>Bluesky</a></li>
-    </ul>
-  </div>
-</section>
+const colorIndices = {
+  bottomLeft: 0,
+  bottomRight: 1,
+  topRight: 2,
+  topLeft: 3,
+} as const;
 
-<div class="ticks"></div>
-<section id="spacer"></section>
-`
+const colorBuffer = root
+  .createBuffer(d.arrayOf(d.vec4f, 4), Object.values(colors))
+  .$usage('vertex');
+const vertexLayout = tgpu.vertexLayout(d.arrayOf(d.vec4f));
 
-setupCounter(document.querySelector<HTMLButtonElement>('#counter')!)
+const vertex = tgpu.vertexFn({
+  in: {
+    idx: d.builtin.vertexIndex,
+    color: d.vec4f,
+  },
+  out: {
+    color: d.vec4f,
+    pos: d.builtin.position,
+  },
+})(({ idx, color }) => {
+  const vertices = [d.vec2f(-1, -1), d.vec2f(1, -1), d.vec2f(1, 1), d.vec2f(-1, 1)];
+  return {
+    color,
+    pos: d.vec4f(vertices[idx], 0, 1),
+  };
+});
+
+const mainFragment = tgpu.fragmentFn({
+  in: {
+    color: d.vec4f,
+  },
+  out: d.vec4f,
+})((input) => input.color);
+
+const indexBuffer = root.createBuffer(d.arrayOf(d.u16, 6), [0, 2, 1, 0, 3, 2]).$usage('index');
+
+const pipeline = root
+  .createRenderPipeline({
+    attribs: { color: vertexLayout.attrib },
+    vertex,
+    fragment: mainFragment,
+  })
+  .withIndexBuffer(indexBuffer);
+
+function render() {
+  pipeline.with(vertexLayout, colorBuffer).withColorAttachment({ view: context }).drawIndexed(6);
+}
+render();
+
+// #region Example controls & Cleanup
+
+function updateColor(color: d.v3f, position: keyof typeof colors): void {
+  colors[position] = d.vec4f(color, 1);
+  const idx = colorIndices[position];
+  colorBuffer.patch({ [idx]: colors[position] });
+  render();
+}
+
+export const controls = defineControls({
+  topLeft: {
+    onColorChange: (value) => updateColor(value, 'topLeft'),
+    initial: colors.topLeft.rgb,
+  },
+  topRight: {
+    onColorChange: (value) => updateColor(value, 'topRight'),
+    initial: colors.topRight.rgb,
+  },
+  bottomLeft: {
+    onColorChange: (value) => updateColor(value, 'bottomLeft'),
+    initial: colors.bottomLeft.rgb,
+  },
+  bottomRight: {
+    onColorChange: (value) => updateColor(value, 'bottomRight'),
+    initial: colors.bottomRight.rgb,
+  },
+});
+
+export function onCleanup() {
+  root.destroy();
+}
+// #endregion
