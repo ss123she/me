@@ -1,9 +1,9 @@
-import TypeGPUPlugin from "unplugin-typegpu/vite"
-import { defineConfig } from "vite"
+import { defineConfig } from "vite";
+import checker from "vite-plugin-checker";
 
 export default defineConfig({
-  plugins: [TypeGPUPlugin()],
+  plugins: [checker({ typescript: true })],
   server: {
-    host: "127.0.0.1"
-  }
-})
+    host: "127.0.0.1",
+  },
+});
