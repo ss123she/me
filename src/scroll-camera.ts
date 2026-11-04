@@ -8,14 +8,27 @@ export class ScrollCamera {
     1,
     10000,
   );
+
   readonly scrollState = {
     progress: 0,
     targetProgress: 0,
   };
-  readonly lookTarget = new THREE.Vector3(0, 200, 0);
+
+  cameraPath = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-100, 200, 0),
+    new THREE.Vector3(0, 100, 0),
+    new THREE.Vector3(800, 0, 0),
+  ]);
+  targetPath = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(100, 300, 0),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(900, 0, 0),
+  ]);
+
+  currentCameraPos = new THREE.Vector3();
+  currentTargetPos = new THREE.Vector3();
 
   constructor() {
-    this.camera.lookAt(-100, 700, -800);
     this.updateCameraFromProgress();
   }
 
@@ -52,12 +65,11 @@ export class ScrollCamera {
 
   updateCameraFromProgress() {
     const p = this.scrollState.progress;
+    this.cameraPath.getPointAt(p, this.currentCameraPos);
+    this.camera.position.copy(this.currentCameraPos);
 
-    const camera = this.camera;
-    camera.position.x = Math.sin(p * Math.PI) * 200;
-    camera.position.y = 500 + Math.sin(p * Math.PI * 2) * 150;
-    camera.position.z = -1200 + p * 2400;
-    this.lookTarget.set(0, 150, camera.position.z + 500);
-    camera.lookAt(this.lookTarget);
+    this.targetPath.getPointAt(p, this.currentTargetPos);
+
+    this.camera.lookAt(this.currentTargetPos);
   }
 }
