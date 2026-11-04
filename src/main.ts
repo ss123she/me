@@ -1,13 +1,10 @@
 import * as THREE from "three";
 
 import Stats from "stats.js";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import gsap from "gsap";
+import { ScrollCamera } from "./scroll-camera";
 
 let container: Element,
   stats: Stats,
-  controls: OrbitControls,
-  camera: THREE.PerspectiveCamera,
   scene: THREE.Scene,
   renderer: THREE.WebGLRenderer,
   mesh: THREE.Mesh,
@@ -18,57 +15,18 @@ const worldWidth = 256,
 const timer = new THREE.Timer();
 timer.connect(document);
 
-const scrollState = {
-  progress: 0,
-  targetProgress: 0,
-};
-const lookTarget = new THREE.Vector3(0, 200, 0);
+const camera = new ScrollCamera();
+
 init();
-
-function onWheel(e: WheelEvent) {
-  e.preventDefault();
-  const sensivity = 0.0008;
-  scrollState.targetProgress = THREE.MathUtils.clamp(
-    scrollState.targetProgress + e.deltaY * sensivity,
-    0,
-    1,
-  );
-
-  gsap.to(scrollState, {
-    progress: scrollState.targetProgress,
-    duration: 1.2,
-    ease: "power2.out",
-    overwrite: "auto",
-    onUpdate: updateCameraFromProgress,
-  });
-}
-
-function updateCameraFromProgress() {
-  const p = scrollState.progress;
-  camera.position.x = Math.sin(p * Math.PI) * 200;
-  camera.position.y = 500 + Math.sin(p * Math.PI * 2) * 150;
-  camera.position.z = -1200 + p * 2400;
-  lookTarget.set(0, 150, camera.position.z + 500);
-  camera.lookAt(lookTarget);
-}
 
 function init() {
   container = document.createElement("container");
   document.body.append(container);
-  camera = new THREE.PerspectiveCamera(
-    60,
-    window.innerWidth / window.innerHeight,
-    1,
-    10000,
-  );
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0xefd1b5);
 
   const data = generateHeight(worldWidth, worldDepth);
-
-  camera.position.set(100, 800, -800);
-  camera.lookAt(-100, 700, -800);
 
   const geometry = new THREE.PlaneGeometry(
     7500,
@@ -103,8 +61,7 @@ function init() {
   renderer.setAnimationLoop(animate);
   container.appendChild(renderer.domElement);
 
-  controls = new OrbitControls(camera, renderer.domElement);
-
+  camera.addWheel();
   stats = new Stats();
   container.appendChild(stats.dom);
 
@@ -112,9 +69,7 @@ function init() {
 }
 
 function onWindowResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-
+  camera.onWindowResize();
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
@@ -203,6 +158,5 @@ function animate() {
 }
 
 function render() {
-  controls.update();
-  renderer.render(scene, camera);
+  renderer.render(scene, camera.camera);
 }
