@@ -18,19 +18,16 @@ export class Terrain {
 
     this.texture = this.createTexture(data, width, depth);
 
-    const material = new THREE.MeshBasicMaterial({ map: this.texture });
+    const material = new THREE.MeshBasicMaterial({
+      map: this.texture,
+      wireframe: true,
+    });
     this.mesh = new THREE.Mesh(geometry, material);
   }
 
   private generateHeight(width: number, height: number): Uint8Array {
-    const size = width * height;
-    const data = new Uint8Array(size);
-    for (let i = 0; i < size; i++) {
-      const x = i % width;
-      const y = Math.floor(i / width);
-      const wave = Math.sin(x * 0.05) * Math.cos(y * 0.05);
-      data[i] = Math.floor((wave + 1) * 0.5 * 128);
-    }
+    const data = new Uint8Array(width * height);
+    data.fill(64);
     return data;
   }
 
