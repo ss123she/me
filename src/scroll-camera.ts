@@ -15,8 +15,8 @@ export class ScrollCamera {
   readonly lookTarget = new THREE.Vector3(0, 200, 0);
 
   constructor() {
-    this.camera.position.set(100, 800, -800);
     this.camera.lookAt(-100, 700, -800);
+    this.updateCameraFromProgress();
   }
 
   public addWheel() {
