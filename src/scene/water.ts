@@ -1,43 +1,48 @@
 import * as THREE from "three";
 import { WaveSimulation } from "./wave-sim";
+import { OceanCascades } from "./ocean-cascades";
 
 export const WATER_DEPTH = 1.2;
-// Average of exp(sin(x)-1) = e^-1 * I0(1) ≈ 0.466
 const MEAN_WAVE_LEVEL = 0.466;
 const SURFACE_Y = WATER_DEPTH * (MEAN_WAVE_LEVEL - 1.0);
-// How fast body follows cursor (1/s).
 const BODY_FOLLOW = 1 / 0.045;
 
 export type Quality = "high" | "low";
 
 interface Preset {
-  simSize: number; // Resolution of simulation
-  raymarchSteps: number; // Maximum raymarch steps
-  raymarchIter: number; // Amount of octaves
-  raymarchIterFar: number; // Amount of octaves far
-  normalIter: number; // Amount of octaves of waves
-  normalIterFar: number; // Amount of octaves of waves far
-  farCutoff: number; // Further - early exit
+  simSize: number;
+  nearRes: number;
+  farRes: number;
+  nearSize: number;
+  farSize: number;
+  raymarchSteps: number;
+  nearOctaves: number;
+  farOctaves: number;
+  farCutoff: number;
 }
 
 const PRESETS: Record<Quality, Preset> = {
   high: {
     simSize: 512,
-    raymarchSteps: 32,
-    raymarchIter: 10,
-    raymarchIterFar: 5,
-    normalIter: 18,
-    normalIterFar: 8,
+    nearRes: 384,
+    farRes: 256,
+    nearSize: 60.0,
+    farSize: 240.0,
+    raymarchSteps: 12,
+    nearOctaves: 18,
+    farOctaves: 14,
     farCutoff: 220,
   },
   low: {
     simSize: 256,
-    raymarchSteps: 18,
-    raymarchIter: 6,
-    raymarchIterFar: 3,
-    normalIter: 10,
-    normalIterFar: 5,
-    farCutoff: 120,
+    nearRes: 256,
+    farRes: 192,
+    nearSize: 50.0,
+    farSize: 180.0,
+    raymarchSteps: 9,
+    nearOctaves: 12,
+    farOctaves: 8,
+    farCutoff: 150,
   },
 };
 
@@ -51,24 +56,14 @@ export function detectQuality(): Quality {
   return "high";
 }
 
-type OceanUniforms = {
-  iTime: THREE.IUniform<number>;
-  uProjectionInverse: THREE.IUniform<THREE.Matrix4>;
-  uMatrixWorld: THREE.IUniform<THREE.Matrix4>;
-  uWaveTexture: THREE.IUniform<THREE.Texture>;
-  uSimWorldSize: THREE.IUniform<number>;
-  uSimRes: THREE.IUniform<number>;
-  uWakeOn: THREE.IUniform<number>;
-};
-
 export class OceanWorld {
   public readonly mesh: THREE.Mesh;
   public readonly waveSim: WaveSimulation;
+  public readonly cascades: OceanCascades;
 
   private readonly material: THREE.ShaderMaterial;
   private readonly geometry: THREE.PlaneGeometry;
   private readonly camera: THREE.PerspectiveCamera;
-  private readonly uniforms: OceanUniforms;
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly mouseNdc = new THREE.Vector2();
@@ -98,28 +93,40 @@ export class OceanWorld {
     const p = PRESETS[quality];
 
     this.waveSim = new WaveSimulation(p.simSize);
-    this.geometry = new THREE.PlaneGeometry(2, 2);
+    this.cascades = new OceanCascades(
+      {
+        resolution: p.nearRes,
+        worldSize: p.nearSize,
+        octaves: p.nearOctaves,
+        eps: 0.01,
+      },
+      {
+        resolution: p.farRes,
+        worldSize: p.farSize,
+        octaves: p.farOctaves,
+        eps: 0.02,
+      },
+    );
 
-    this.uniforms = {
-      iTime: { value: 0 },
-      uProjectionInverse: { value: new THREE.Matrix4() },
-      uMatrixWorld: { value: new THREE.Matrix4() },
-      uWaveTexture: { value: this.waveSim.texture },
-      uSimWorldSize: { value: this.waveSim.worldSize },
-      uSimRes: { value: this.waveSim.size },
-      uWakeOn: { value: 1 },
-    };
+    this.geometry = new THREE.PlaneGeometry(2, 2);
 
     this.material = new THREE.ShaderMaterial({
       depthWrite: false,
       depthTest: false,
-      uniforms: this.uniforms,
+      uniforms: {
+        iTime: { value: 0 },
+        uProjectionInverse: { value: new THREE.Matrix4() },
+        uMatrixWorld: { value: new THREE.Matrix4() },
+
+        uCascadeNear: { value: this.cascades.targetNear.texture },
+        uCascadeFar: { value: this.cascades.targetFar.texture },
+        uNearCenter: { value: this.cascades.centerNear },
+        uFarCenter: { value: this.cascades.centerFar },
+        uNearSize: { value: p.nearSize },
+        uFarSize: { value: p.farSize },
+      },
       defines: {
         RAYMARCH_STEPS: p.raymarchSteps,
-        ITER_RAYMARCH: p.raymarchIter,
-        ITER_RAYMARCH_FAR: p.raymarchIterFar,
-        ITER_NORMAL: p.normalIter,
-        ITER_NORMAL_FAR: p.normalIterFar,
         FAR_CUTOFF: p.farCutoff.toFixed(1),
       },
       vertexShader: /* glsl */ `
@@ -135,113 +142,76 @@ export class OceanWorld {
         uniform mat4 uProjectionInverse;
         uniform mat4 uMatrixWorld;
 
-        uniform sampler2D uWaveTexture;
-        uniform float uSimWorldSize;
-        uniform float uSimRes;
-        uniform float uWakeOn;
+        uniform sampler2D uCascadeNear;
+        uniform sampler2D uCascadeFar;
+        uniform vec2 uNearCenter;
+        uniform vec2 uFarCenter;
+        uniform float uNearSize;
+        uniform float uFarSize;
 
-        #define DRAG_MULT 0.38
         #define WATER_DEPTH ${WATER_DEPTH.toFixed(3)}
         #define WATER_TOP 0.3
         #define MEAN_Y (${SURFACE_Y.toFixed(3)})
 
-        vec2 wavedx(vec2 position, vec2 direction, float frequency, float timeshift) {
-          float x = dot(direction, position) * frequency + timeshift;
-          float wave = exp(sin(x) - 1.0);
-          float dx = wave * cos(x);
-          return vec2(wave, -dx);
-        }
+        vec3 sampleWaves(vec2 pos) {
+          vec2 uvNear = (pos - uNearCenter) / uNearSize + 0.5;
+          vec2 uvFar  = (pos - uFarCenter) / uFarSize + 0.5;
 
-        float sampleBicubic(vec2 uv) {
-          vec2 coord = uv * uSimRes - 0.5;
-          vec2 idx = floor(coord);
-          vec2 f = coord - idx;
+          float distToCam = distance(pos, cameraPosition.xz);
 
-          vec2 w0 = (1.0 / 6.0) * (f * (f * (-f + 3.0) - 3.0) + 1.0);
-          vec2 w1 = (1.0 / 6.0) * (f * f * (3.0 * f - 6.0) + 4.0);
-          vec2 w2 = (1.0 / 6.0) * (f * (f * (-3.0 * f + 3.0) + 3.0) + 1.0);
-          vec2 w3 = (1.0 / 6.0) * (f * f * f);
+          float blend = smoothstep(22.0, 36.0, distToCam);
 
-          vec2 g0 = w0 + w1;
-          vec2 g1 = w2 + w3;
-          vec2 p0 = (idx + (w1 / g0 - 1.0) + 0.5) / uSimRes;
-          vec2 p1 = (idx + (w3 / g1 + 1.0) + 0.5) / uSimRes;
+          vec3 farData = (uvFar.x >= 0.0 && uvFar.x <= 1.0 && uvFar.y >= 0.0 && uvFar.y <= 1.0)
+            ? texture2D(uCascadeFar, uvFar).rgb
+            : vec3(MEAN_Y, 0.0, 0.0);
 
-          float t00 = texture2D(uWaveTexture, vec2(p0.x, p0.y)).r;
-          float t10 = texture2D(uWaveTexture, vec2(p1.x, p0.y)).r;
-          float t01 = texture2D(uWaveTexture, vec2(p0.x, p1.y)).r;
-          float t11 = texture2D(uWaveTexture, vec2(p1.x, p1.y)).r;
-
-          float row0 = mix(t10, t00, g0.x);
-          float row1 = mix(t11, t01, g0.x);
-          return mix(row1, row0, g0.y);
-        }
-
-        float getSimulatedWaves(vec2 pos, bool smoothSample) {
-          if (uWakeOn < 0.5) return 0.0;
-          vec2 uv = pos / uSimWorldSize + 0.5;
-          if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) return 0.0;
-          if (smoothSample) return sampleBicubic(uv);
-          return texture2D(uWaveTexture, uv).r;
-        }
-
-        float getwaves(vec2 position, int iterations, bool smoothSample) {
-          vec2 simPos = position;
-
-          float wavePhaseShift = length(position) * 0.1;
-          float iter = 0.0;
-          float frequency = 0.8;
-          float timeMultiplier = 2.0;
-          float weight = 1.0;
-          float sumOfValues = 0.0;
-          float sumOfWeights = 0.0;
-
-          for (int i = 0; i < iterations; i++) {
-            vec2 p = vec2(sin(iter), cos(iter));
-            vec2 res = wavedx(position, p, frequency, iTime * timeMultiplier + wavePhaseShift);
-
-            position += p * res.y * weight * DRAG_MULT;
-
-            sumOfValues += res.x * weight;
-            sumOfWeights += weight;
-
-            weight = mix(weight, 0.0, 0.2);
-            frequency *= 1.18;
-            timeMultiplier *= 1.07;
-            iter += 1232.399;
+          if (blend >= 1.0) {
+            return farData;
           }
 
-          float ocean = sumOfValues / sumOfWeights;
-          float wake = getSimulatedWaves(simPos, smoothSample) / WATER_DEPTH;
-          return ocean + wake;
-        }
+          vec3 nearData = (uvNear.x >= 0.0 && uvNear.x <= 1.0 && uvNear.y >= 0.0 && uvNear.y <= 1.0)
+            ? texture2D(uCascadeNear, uvNear).rgb
+            : farData;
 
-        float raymarchwater(vec3 camera, vec3 start, vec3 end, float depth) {
-          vec3 pos = start;
-          vec3 dir = normalize(end - start);
-
-          float startDist = distance(start, camera);
-          int iters = int(mix(float(ITER_RAYMARCH), float(ITER_RAYMARCH_FAR),
-                              smoothstep(30.0, FAR_CUTOFF, startDist)));
-
-          for (int i = 0; i < RAYMARCH_STEPS; i++) {
-            float height = getwaves(pos.xz, iters, false) * depth - depth;
-            if (height + 0.01 > pos.y) return distance(pos, camera);
-            pos += dir * (pos.y - height);
+          if (blend <= 0.0) {
+            return nearData;
           }
-          return distance(start, camera);
+
+          return mix(nearData, farData, blend);
         }
 
-        vec3 normal(vec2 pos, float e, float depth, int iters, bool smoothSample) {
-          vec2 ex = vec2(e, 0.0);
-          float H = getwaves(pos.xy, iters, smoothSample) * depth;
-          vec3 a = vec3(pos.x, H, pos.y);
-          return normalize(
-            cross(
-              a - vec3(pos.x - e, getwaves(pos.xy - ex.xy, iters, smoothSample) * depth, pos.y),
-              a - vec3(pos.x, getwaves(pos.xy + ex.yx, iters, smoothSample) * depth, pos.y + e)
-            )
-          );
+        float getBakedHeight(vec2 pos) {
+          return sampleWaves(pos).r;
+        }
+
+        float raymarchwater(vec3 camera, vec3 start, vec3 end) {
+          vec3 seg = end - start;
+          float segLen = length(seg);
+          vec3 dir = seg / segLen;
+
+          float stepSize = segLen / float(RAYMARCH_STEPS);
+          float prevDist = 0.0;
+          float prevDiff = start.y - getBakedHeight(start.xz);
+
+          if (prevDiff <= 0.0) return distance(camera, start);
+
+          for (int i = 1; i <= RAYMARCH_STEPS; i++) {
+            float curDist = float(i) * stepSize;
+            vec3 p = start + dir * curDist;
+            float h = getBakedHeight(p.xz);
+            float curDiff = p.y - h;
+
+            if (curDiff <= 0.0) {
+              float frac = prevDiff / (prevDiff - curDiff + 1e-6);
+              float hitDist = mix(prevDist, curDist, clamp(frac, 0.0, 1.0));
+              return distance(camera, start + dir * hitDist);
+            }
+
+            prevDist = curDist;
+            prevDiff = curDiff;
+          }
+
+          return distance(camera, end);
         }
 
         vec3 getSunDirection() {
@@ -283,7 +253,6 @@ export class OceanWorld {
           vec3 ray = getRay(vUv);
           vec3 origin = cameraPosition;
 
-          // Early exit
           if (ray.y >= 0.0) {
             vec3 C = getAtmosphere(ray) + getSun(ray);
             gl_FragColor = vec4(C * 2.0, 1.0);
@@ -295,37 +264,34 @@ export class OceanWorld {
           vec3 waterPlaneLow = vec3(0.0, -WATER_DEPTH, 0.0);
 
           float highPlaneHit = intersectPlane(origin, ray, waterPlaneHigh, up);
-
           float dist;
           vec3 N;
 
           if (highPlaneHit > FAR_CUTOFF) {
-            // Early exit
             dist = intersectPlane(origin, ray, vec3(0.0, MEAN_Y, 0.0), up);
             N = up;
           } else {
             float lowPlaneHit = intersectPlane(origin, ray, waterPlaneLow, up);
             vec3 highHitPos = origin + ray * highPlaneHit;
-            vec3 lowHitPos = origin + ray * lowPlaneHit;
+            vec3 lowHitPos  = origin + ray * lowPlaneHit;
 
-            dist = raymarchwater(origin, highHitPos, lowHitPos, WATER_DEPTH);
+            dist = raymarchwater(origin, highHitPos, lowHitPos);
             vec3 hit = origin + ray * dist;
 
-            int itN = int(mix(float(ITER_NORMAL), float(ITER_NORMAL_FAR),
-                              smoothstep(20.0, FAR_CUTOFF, dist)));
-            N = normal(hit.xz, 0.01, WATER_DEPTH, itN, dist < 80.0);
+            vec3 sampleData = sampleWaves(hit.xz);
+            vec2 grad = sampleData.gb;
+            N = normalize(vec3(-grad.x, 1.0, -grad.y));
 
             float flatten = clamp(
               0.8 * min(1.0, sqrt(dist * 0.01) * 1.1)
                 + 0.2 * smoothstep(0.5 * FAR_CUTOFF, FAR_CUTOFF, dist),
               0.0, 1.0);
-            N = mix(N, up, flatten);
+            N = normalize(mix(N, up, flatten));
           }
 
           vec3 waterHitPos = origin + ray * dist;
 
           float fresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - max(0.0, dot(-N, ray)), 5.0);
-
           vec3 R = normalize(reflect(ray, N));
           R.y = abs(R.y);
 
@@ -356,14 +322,13 @@ export class OceanWorld {
   public update(renderer: THREE.WebGLRenderer, delta: number) {
     const dt = THREE.MathUtils.clamp(delta, 1 / 240, 0.1);
 
-    this.uniforms.iTime.value += delta;
+    this.material.uniforms.iTime!.value += delta;
     this.camera.updateMatrixWorld();
-    this.uniforms.uProjectionInverse.value.copy(
+    this.material.uniforms.uProjectionInverse!.value.copy(
       this.camera.projectionMatrixInverse,
     );
-    this.uniforms.uMatrixWorld.value.copy(this.camera.matrixWorld);
+    this.material.uniforms.uMatrixWorld!.value.copy(this.camera.matrixWorld);
 
-    // Where cursor points on water surface
     let active = false;
     if (this.pointerInside) {
       this.raycaster.setFromCamera(this.mouseNdc, this.camera);
@@ -382,7 +347,6 @@ export class OceanWorld {
       }
     }
 
-    // Body moves to cursor
     let speed = 0;
     if (active) {
       if (!this.bodyReady) {
@@ -398,10 +362,17 @@ export class OceanWorld {
       this.bodyReady = false;
     }
 
-    // Water simulation
     this.waveSim.update(renderer, dt, this.body.x, this.body.y, speed, active);
-    this.uniforms.uWaveTexture.value = this.waveSim.texture;
-    this.uniforms.uWakeOn.value = this.waveSim.awake ? 1 : 0;
+
+    this.cascades.update(
+      renderer,
+      this.camera.position,
+      this.material.uniforms.iTime!.value,
+      this.waveSim,
+    );
+
+    this.material.uniforms.uNearCenter!.value.copy(this.cascades.centerNear);
+    this.material.uniforms.uFarCenter!.value.copy(this.cascades.centerFar);
   }
 
   public dispose() {
@@ -417,5 +388,6 @@ export class OceanWorld {
     this.geometry.dispose();
     this.material.dispose();
     this.waveSim.dispose();
+    this.cascades.dispose();
   }
 }
