@@ -37,9 +37,9 @@ export class World {
     this.composer.addPass(new RenderPass(this.scene, this.camera.camera));
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.7, // strength
-      0.5, // radius
-      1.0, // threshold
+      0.25, // strength
+      0.4, // radius
+      1.2, // threshold
     );
     this.composer.addPass(this.bloom);
     this.composer.addPass(new OutputPass());
