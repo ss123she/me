@@ -5,6 +5,7 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { ScrollCamera } from "../scroll-camera";
+import { GpuProfiler } from "../gpu-profiler";
 
 export class World {
   public readonly scene = new THREE.Scene();
@@ -16,6 +17,7 @@ export class World {
   private readonly stats = new Stats();
   private readonly timer = new THREE.Timer();
   private readonly updaters: ((delta: number) => void)[] = [];
+  public readonly profiler: GpuProfiler;
 
   constructor(container: HTMLElement) {
     const skyColor = new THREE.Color(0xa0c3df);
@@ -27,6 +29,8 @@ export class World {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     container.appendChild(this.renderer.domElement);
+
+    this.profiler = new GpuProfiler(this.renderer);
 
     // Post-processing settings
     this.composer = new EffectComposer(this.renderer);
@@ -71,7 +75,10 @@ export class World {
 
     for (const update of this.updaters) update(delta);
 
+    this.profiler.begin("frame_gpu");
     this.composer.render();
+    this.profiler.end();
+
     this.stats.update();
   }
 }
