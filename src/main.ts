@@ -1,51 +1,115 @@
-import GUI from "lil-gui";
 import * as THREE from "three";
-import { World } from "./scene/world";
-import { OceanWorld } from "./scene/water";
-import { AdaptiveResolution } from "./scene/adaptive-res";
-import { Sky } from "./scene/sky";
-import { PerformanceMonitor } from "./performance-monitor";
+import "@fontsource/jetbrains-mono/latin-400.css";
+import { Tunnel, BG, FOG_NEAR, FOG_FAR } from "./scene/tunnel";
+import { createAtlas } from "./scene/text/atlas";
+import { Cards } from "./scene/cards";
+import { Crystals } from "./scene/crystals";
+import { STOPS, type Stop } from "./content";
+import { ScrollCamera } from "./scroll-camera";
 
-const appContainer = document.getElementById("app") ?? document.body;
-const world = new World(appContainer);
+function mountHiddenText(stops: Stop[]) {
+  const root = document.createElement("div");
+  root.style.cssText =
+    "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+  for (const s of stops) {
+    const sec = document.createElement("section");
+    const h = document.createElement("h2");
+    h.textContent = s.title.replace(/^[/\s]+/, "");
+    sec.append(h);
+    for (const b of s.body ?? []) {
+      const p = document.createElement("p");
+      p.textContent = b;
+      sec.append(p);
+    }
+    for (const l of s.links ?? []) {
+      const a = document.createElement("a");
+      a.href = l.url;
+      a.textContent = l.label;
+      sec.append(a);
+    }
+    root.append(sec);
+  }
+  document.body.append(root);
+}
 
-const gui = new GUI({ title: "Settings" });
-const perf = new PerformanceMonitor(world.renderer, gui);
+export class World {
+  public readonly scene = new THREE.Scene();
+  public readonly renderer = new THREE.WebGLRenderer({ antialias: true });
+  public readonly camera = new ScrollCamera();
 
-const adaptive = new AdaptiveResolution(world.renderer, {
-  minRatio: 0.5,
-  maxRatio: Math.min(window.devicePixelRatio, 2),
-  targetFps: 60,
-});
+  private readonly timer = new THREE.Timer();
+  private readonly updaters: ((delta: number) => void)[] = [];
 
-const ocean = new OceanWorld(world.camera.camera);
-const sky = new Sky(world.camera.camera);
+  constructor(container: HTMLElement) {
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.domElement.style.touchAction = "none";
+    container.appendChild(this.renderer.domElement);
 
-world.add(ocean.mesh);
-world.add(sky.mesh);
+    this.camera.attach();
+    window.addEventListener("resize", () => this.onResize());
 
-const sunDirection = new THREE.Vector3();
-let totalTime = 0;
+    this.timer.connect(document);
+    this.renderer.setAnimationLoop(() => this.render());
+  }
 
-world.onFrame((delta) => {
-  perf.beginCpu();
+  public add(object: THREE.Object3D) {
+    this.scene.add(object);
+  }
 
-  totalTime += delta;
-  sunDirection
-    .set(-0.08, 0.35 + Math.sin(totalTime * 0.15 + 2.6) * 0.25, 0.58)
-    .normalize();
+  public onFrame(update: (delta: number) => void) {
+    this.updaters.push(update);
+  }
 
-  adaptive.update(delta);
-  sky.update(sunDirection);
-  ocean.update(delta, sunDirection);
+  private onResize() {
+    this.camera.onWindowResize();
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+  }
 
-  perf.endCpu();
-  perf.update(delta);
-});
+  private render() {
+    this.timer.update();
+    const delta = this.timer.getDelta();
 
-const camFolder = gui.addFolder("Camera & Bloom");
-camFolder
-  .add(world.camera.scrollState, "progress", 0, 1)
-  .name("Scroll")
-  .listen();
-camFolder.add(world.bloom, "strength", 0, 2).name("Bloom Glow");
+    this.camera.update(delta);
+    for (const update of this.updaters) update(delta);
+
+    this.renderer.render(this.scene, this.camera.camera);
+  }
+}
+
+async function main() {
+  const world = new World(document.getElementById("app") ?? document.body);
+  world.scene.background = new THREE.Color(BG);
+  world.scene.fog = new THREE.Fog(BG, FOG_NEAR, FOG_FAR);
+
+  const atlas = await createAtlas();
+  const tunnel = new Tunnel(
+    world.camera,
+    STOPS.length,
+    world.renderer.getPixelRatio(),
+  );
+  const cards = new Cards(
+    world.camera,
+    world.scene,
+    atlas,
+    STOPS,
+    world.renderer.domElement,
+  );
+  const crystals = new Crystals(world.camera);
+  world.add(tunnel.group);
+  world.add(crystals.mesh);
+
+  const fit = () => cards.resize(window.innerWidth / window.innerHeight);
+  window.addEventListener("resize", fit);
+  fit();
+
+  world.onFrame((delta) => {
+    tunnel.update(delta);
+    crystals.update(delta);
+    cards.update(delta);
+  });
+
+  mountHiddenText(STOPS);
+}
+
+main();

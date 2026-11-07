@@ -1,44 +1,78 @@
-import gsap from "gsap";
 import * as THREE from "three";
+
+const WHEEL_SENSITIVITY = 0.0005;
+const TOUCH_SENSITIVITY = 0.001;
+const SMOOTHING = 3.5;
+const LOOK_AHEAD = 10;
+
+export const LEAD = 14;
+
+const KEY_STEPS: Record<string, number> = {
+  ArrowDown: 0.05,
+  ArrowUp: -0.05,
+  PageDown: 0.2,
+  PageUp: -0.2,
+  " ": 0.2,
+};
 
 export class ScrollCamera {
   public readonly camera = new THREE.PerspectiveCamera(
     60,
     window.innerWidth / window.innerHeight,
     0.1,
-    2000,
+    300,
   );
 
-  cameraPath = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-12, 4.0, 12),
-    new THREE.Vector3(-4, 2.0, 6),
-    new THREE.Vector3(5, 2.8, -4),
-    new THREE.Vector3(12, 5.0, -12),
-  ]);
+  public readonly path = new THREE.CatmullRomCurve3(
+    [
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(4, 2, -40),
+      new THREE.Vector3(-4, -1.5, -80),
+      new THREE.Vector3(3, 2.5, -120),
+      new THREE.Vector3(-2, 0, -160),
+      new THREE.Vector3(0, 0, -200),
+    ],
+    false,
+    "centripetal",
+  );
 
-  targetPath = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-2, 1.2, 2),
-    new THREE.Vector3(0, 0.8, 0),
-    new THREE.Vector3(1, 0.8, -1),
-    new THREE.Vector3(0, 1.5, 0),
-  ]);
+  public readonly length = this.path.getLength();
+  public readonly travel = this.length - LEAD;
 
-  readonly scrollState = {
-    progress: 0,
-    targetProgress: 0,
-  };
+  private readonly pos = new THREE.Vector3();
+  private readonly tan = new THREE.Vector3();
 
-  currentCameraPos = new THREE.Vector3();
-  currentTargetPos = new THREE.Vector3();
+  private current = 0;
+  private target = 0;
+  private lastTouchY = 0;
+  private idle = 0;
+  public snapStops = 0;
 
-  constructor() {
-    this.updateCameraFromProgress();
+  public get progress(): number {
+    return this.current;
   }
 
-  public addWheel() {
-    window.addEventListener("wheel", (p) => this.onWheel(p), {
-      passive: false,
-    });
+  public cameraU(progress: number): number {
+    return (progress * this.travel) / this.length;
+  }
+
+  public archU(progress: number): number {
+    return (progress * this.travel + LEAD) / this.length;
+  }
+
+  public attach() {
+    window.addEventListener("wheel", this.onWheel, { passive: false });
+    window.addEventListener("touchstart", this.onTouchStart, { passive: true });
+    window.addEventListener("touchmove", this.onTouchMove, { passive: false });
+    window.addEventListener("keydown", this.onKey);
+    this.apply();
+  }
+
+  public detach() {
+    window.removeEventListener("wheel", this.onWheel);
+    window.removeEventListener("touchstart", this.onTouchStart);
+    window.removeEventListener("touchmove", this.onTouchMove);
+    window.removeEventListener("keydown", this.onKey);
   }
 
   public onWindowResize() {
@@ -46,34 +80,59 @@ export class ScrollCamera {
     this.camera.updateProjectionMatrix();
   }
 
-  onWheel(e: WheelEvent) {
-    e.preventDefault();
-    const sensivity = 0.0008;
-
-    this.scrollState.targetProgress = THREE.MathUtils.clamp(
-      this.scrollState.targetProgress + e.deltaY * sensivity,
-      0,
-      1,
-    );
-
-    gsap.to(this.scrollState, {
-      progress: this.scrollState.targetProgress,
-      duration: 1.2,
-      ease: "power2.out",
-      overwrite: "auto",
-      onUpdate: () => this.updateCameraFromProgress(),
-    });
+  public update(delta: number) {
+    const k = 1 - Math.exp(-delta * SMOOTHING);
+    this.idle += delta;
+    if (this.snapStops > 1 && this.idle > 0.18) {
+      const n = this.snapStops - 1;
+      this.target +=
+        (Math.round(this.target * n) / n - this.target) *
+        (1 - Math.exp(-delta * 3));
+    }
+    this.current += (this.target - this.current) * k;
+    this.apply();
   }
 
-  updateCameraFromProgress() {
-    const p = this.scrollState.progress;
+  private scrollBy(amount: number) {
+    this.idle = 0;
+    amount = THREE.MathUtils.clamp(amount, -0.04, 0.04);
+    this.target = THREE.MathUtils.clamp(this.target + amount, 0, 1);
+  }
 
-    // Camera position
-    this.cameraPath.getPointAt(p, this.currentCameraPos);
-    this.camera.position.copy(this.currentCameraPos);
+  private onWheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+    this.scrollBy(e.deltaY * unit * WHEEL_SENSITIVITY);
+  };
 
-    // Target position
-    this.targetPath.getPointAt(p, this.currentTargetPos);
-    this.camera.lookAt(this.currentTargetPos);
+  private onTouchStart = (e: TouchEvent) => {
+    this.lastTouchY = e.touches[0]!.clientY;
+  };
+
+  private onTouchMove = (e: TouchEvent) => {
+    e.preventDefault();
+    const y = e.touches[0]!.clientY;
+    this.scrollBy((this.lastTouchY - y) * TOUCH_SENSITIVITY);
+    this.lastTouchY = y;
+  };
+
+  private onKey = (e: KeyboardEvent) => {
+    const step = KEY_STEPS[e.key];
+    if (step === undefined) return;
+    e.preventDefault();
+    this.scrollBy(step);
+  };
+
+  private apply() {
+    const u = this.cameraU(this.current);
+    this.path.getPointAt(u, this.pos);
+    this.path.getTangentAt(u, this.tan);
+
+    this.camera.position.copy(this.pos);
+    this.camera.lookAt(
+      this.pos.x + this.tan.x * LOOK_AHEAD,
+      this.pos.y + this.tan.y * LOOK_AHEAD,
+      this.pos.z + this.tan.z * LOOK_AHEAD,
+    );
   }
 }
