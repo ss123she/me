@@ -1,9 +1,12 @@
 import * as THREE from "three";
 
-const WHEEL_SENSITIVITY = 0.0005;
+const WHEEL_SENSITIVITY = 0.0004;
 const TOUCH_SENSITIVITY = 0.001;
 const SMOOTHING = 3.5;
 const LOOK_AHEAD = 10;
+const MOUSE_STRENGTH_LOOK = 2.0;
+const MOUSE_STRENGTH_POS = 0.8;
+const MOUSE_SMOOTHING = 5.0;
 
 export const LEAD = 14;
 
@@ -45,6 +48,14 @@ export class ScrollCamera {
   private readonly pos = new THREE.Vector3();
   private readonly tan = new THREE.Vector3();
 
+  private mouseTarget = new THREE.Vector2(0, 0);
+  private mouseCurrent = new THREE.Vector2(0, 0);
+
+  private readonly lookTarget = new THREE.Vector3();
+  private readonly right = new THREE.Vector3();
+  private readonly up = new THREE.Vector3(0, 1, 0);
+  private readonly camUp = new THREE.Vector3();
+
   private current = 0;
   private target = 0;
   private lastTouchY = 0;
@@ -68,6 +79,7 @@ export class ScrollCamera {
     window.addEventListener("touchstart", this.onTouchStart, { passive: true });
     window.addEventListener("touchmove", this.onTouchMove, { passive: false });
     window.addEventListener("keydown", this.onKey);
+    window.addEventListener("mousemove", this.onMouseMove);
     this.apply();
   }
 
@@ -76,12 +88,18 @@ export class ScrollCamera {
     window.removeEventListener("touchstart", this.onTouchStart);
     window.removeEventListener("touchmove", this.onTouchMove);
     window.removeEventListener("keydown", this.onKey);
+    window.removeEventListener("mousemove", this.onMouseMove);
   }
 
   public onWindowResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
   }
+
+  private onMouseMove = (e: MouseEvent) => {
+    this.mouseTarget.x = (e.clientX / window.innerWidth) * 2 - 1;
+    this.mouseTarget.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  };
 
   public update(delta: number) {
     const k = 1 - Math.exp(-delta * SMOOTHING);
@@ -93,6 +111,10 @@ export class ScrollCamera {
         (1 - Math.exp(-delta * 3));
     }
     this.current += (this.target - this.current) * k;
+
+    const mouseK = 1 - Math.exp(-delta * MOUSE_SMOOTHING);
+    this.mouseCurrent.lerp(this.mouseTarget, mouseK);
+
     this.apply();
   }
 
@@ -129,13 +151,22 @@ export class ScrollCamera {
   private apply() {
     const u = this.cameraU(this.current);
     this.path.getPointAt(u, this.pos);
-    this.path.getTangentAt(u, this.tan);
+    this.path.getTangentAt(u, this.tan).normalize();
 
-    this.camera.position.copy(this.pos);
-    this.camera.lookAt(
-      this.pos.x + this.tan.x * LOOK_AHEAD,
-      this.pos.y + this.tan.y * LOOK_AHEAD,
-      this.pos.z + this.tan.z * LOOK_AHEAD,
-    );
+    this.right.crossVectors(this.tan, this.up).normalize();
+    this.camUp.crossVectors(this.right, this.tan).normalize();
+
+    this.camera.position
+      .copy(this.pos)
+      .addScaledVector(this.right, this.mouseCurrent.x * MOUSE_STRENGTH_POS)
+      .addScaledVector(this.camUp, this.mouseCurrent.y * MOUSE_STRENGTH_POS);
+
+    this.lookTarget
+      .copy(this.pos)
+      .addScaledVector(this.tan, LOOK_AHEAD)
+      .addScaledVector(this.right, this.mouseCurrent.x * MOUSE_STRENGTH_LOOK)
+      .addScaledVector(this.camUp, this.mouseCurrent.y * MOUSE_STRENGTH_LOOK);
+
+    this.camera.lookAt(this.lookTarget);
   }
 }
