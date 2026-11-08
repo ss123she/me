@@ -15,6 +15,16 @@ const KEY_STEPS: Record<string, number> = {
   " ": 0.2,
 };
 
+export const PATH_POINTS = [
+  new THREE.Vector3(0, 0, 0),
+  new THREE.Vector3(14, 6, -35),
+  new THREE.Vector3(-12, -4, -75),
+  new THREE.Vector3(-16, 8, -115),
+  new THREE.Vector3(10, -6, -155),
+  new THREE.Vector3(-4, 2, -190),
+  new THREE.Vector3(0, 0, -220),
+];
+
 export class ScrollCamera {
   public readonly camera = new THREE.PerspectiveCamera(
     60,
@@ -24,14 +34,7 @@ export class ScrollCamera {
   );
 
   public readonly path = new THREE.CatmullRomCurve3(
-    [
-      new THREE.Vector3(0, 0, 0),
-      new THREE.Vector3(4, 2, -40),
-      new THREE.Vector3(-4, -1.5, -80),
-      new THREE.Vector3(3, 2.5, -120),
-      new THREE.Vector3(-2, 0, -160),
-      new THREE.Vector3(0, 0, -200),
-    ],
+    PATH_POINTS,
     false,
     "centripetal",
   );

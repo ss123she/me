@@ -1,16 +1,30 @@
 import * as THREE from "three";
 import "@fontsource/jetbrains-mono/latin-400.css";
-import { Tunnel, BG, FOG_NEAR, FOG_FAR } from "./scene/tunnel";
+import { BG, FOG_NEAR, FOG_FAR } from "./scene/colors";
 import { createAtlas } from "./scene/text/atlas";
 import { Cards } from "./scene/cards";
-import { Crystals } from "./scene/crystals";
 import { STOPS, type Stop } from "./content";
 import { ScrollCamera } from "./scroll-camera";
+import { Cave } from "./scene/cave/cave";
 
 function mountHiddenText(stops: Stop[]) {
   const root = document.createElement("div");
-  root.style.cssText =
-    "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap";
+  root.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+    pointer-events: none;
+  `;
+
   for (const s of stops) {
     const sec = document.createElement("section");
     const h = document.createElement("h2");
@@ -82,12 +96,13 @@ async function main() {
   world.scene.background = new THREE.Color(BG);
   world.scene.fog = new THREE.Fog(BG, FOG_NEAR, FOG_FAR);
 
-  const atlas = await createAtlas();
-  const tunnel = new Tunnel(
-    world.camera,
-    STOPS.length,
-    world.renderer.getPixelRatio(),
+  const cave = await Cave.create(world.camera, (p) =>
+    console.log(Math.round(p * 100) + "%"),
   );
+  world.scene.add(cave.group);
+
+  const atlas = await createAtlas();
+
   const cards = new Cards(
     world.camera,
     world.scene,
@@ -95,17 +110,13 @@ async function main() {
     STOPS,
     world.renderer.domElement,
   );
-  const crystals = new Crystals(world.camera);
-  world.add(tunnel.group);
-  world.add(crystals.mesh);
 
   const fit = () => cards.resize(window.innerWidth / window.innerHeight);
   window.addEventListener("resize", fit);
   fit();
 
   world.onFrame((delta) => {
-    tunnel.update(delta);
-    crystals.update(delta);
+    cave.update(delta);
     cards.update(delta);
   });
 
