@@ -10,6 +10,7 @@ import {
 import { ScrollCamera } from "./scroll-camera";
 import { FrostEffect } from "./scene/frost";
 import { IceShatter } from "./scene/shatter";
+import { COLOR_B } from "./scene/colors";
 
 const WAKE_TIME = 1.8;
 
@@ -29,7 +30,7 @@ export class World {
   private readonly timer = new THREE.Timer();
   private readonly updaters: ((delta: number) => void)[] = [];
 
-  private readonly frost = new FrostEffect();
+  frost = new FrostEffect(COLOR_B);
   private frostPass: EffectPass | null = null;
   private readonly shatter = new IceShatter();
   private pendingImpact: Impact | null = null;
