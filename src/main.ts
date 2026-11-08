@@ -6,6 +6,15 @@ import { Cards } from "./scene/cards";
 import { STOPS, type Stop } from "./content";
 import { ScrollCamera } from "./scroll-camera";
 import { Cave } from "./scene/cave/cave";
+import {
+  BloomEffect,
+  EffectPass,
+  RenderPass,
+  VignetteEffect,
+  EffectComposer,
+  ToneMappingEffect,
+  ToneMappingMode,
+} from "postprocessing";
 
 function mountHiddenText(stops: Stop[]) {
   const root = document.createElement("div");
@@ -48,8 +57,14 @@ function mountHiddenText(stops: Stop[]) {
 
 export class World {
   public readonly scene = new THREE.Scene();
-  public readonly renderer = new THREE.WebGLRenderer({ antialias: true });
+  public readonly renderer = new THREE.WebGLRenderer({
+    antialias: false,
+    powerPreference: "high-performance",
+    stencil: false,
+    depth: false,
+  });
   public readonly camera = new ScrollCamera();
+  public readonly composer: EffectComposer;
 
   private readonly timer = new THREE.Timer();
   private readonly updaters: ((delta: number) => void)[] = [];
@@ -61,6 +76,23 @@ export class World {
     container.appendChild(this.renderer.domElement);
 
     this.camera.attach();
+
+    this.composer = new EffectComposer(this.renderer, { multisampling: 4 });
+    this.composer.addPass(new RenderPass(this.scene, this.camera.camera));
+    this.composer.addPass(
+      new EffectPass(
+        this.camera.camera,
+        new BloomEffect({
+          intensity: 0.8,
+          luminanceThreshold: 0.6,
+          luminanceSmoothing: 0.2,
+          mipmapBlur: true,
+        }),
+        new VignetteEffect({ offset: 0.3, darkness: 0.6 }),
+        new ToneMappingEffect({ mode: ToneMappingMode.ACES_FILMIC }),
+      ),
+    );
+
     window.addEventListener("resize", () => this.onResize());
 
     this.timer.connect(document);
@@ -77,7 +109,7 @@ export class World {
 
   private onResize() {
     this.camera.onWindowResize();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
   }
 
   private render() {
@@ -87,7 +119,7 @@ export class World {
     this.camera.update(delta);
     for (const update of this.updaters) update(delta);
 
-    this.renderer.render(this.scene, this.camera.camera);
+    this.composer.render(delta);
   }
 }
 

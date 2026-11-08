@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { Atlas } from "./atlas";
+import { tickSound } from "../../tick-audio";
 
 export const COLS = 30;
 export const CW = 0.22;
@@ -88,6 +89,9 @@ export class TextBlock {
     uHoverT: { value: -100 },
   };
   private readonly shared: Shared;
+  private readonly glyphCount: number;
+  private prevFrac = 0;
+  private tickAcc = 0;
 
   constructor(
     atlas: Atlas,
@@ -99,6 +103,8 @@ export class TextBlock {
 
     let n = 0;
     for (const r of rows) for (const ch of r.text) if (ch !== " ") n++;
+
+    this.glyphCount = n;
 
     const pos = new Float32Array(n * 12);
     const uv = new Float32Array(n * 8);
@@ -163,12 +169,32 @@ export class TextBlock {
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
+
+    this.mesh.onBeforeRender = () => this.trackReveal();
   }
 
   /** row = Hower line index or -1. */
   public setHover(row: number) {
     if (row === this.u.uHoverRow.value) return;
     this.u.uHoverRow.value = row;
-    if (row >= 0) this.u.uHoverT.value = this.shared.uTime.value;
+    if (row >= 0) {
+      this.u.uHoverT.value = this.shared.uTime.value;
+      tickSound.tick(6, 0.7);
+    }
+  }
+
+  private trackReveal() {
+    const frac = Math.min(Math.max(this.u.uProgress.value * 1.5, 0), 1);
+    const delta = Math.abs(frac - this.prevFrac) * this.glyphCount;
+    this.prevFrac = frac;
+
+    if (this.u.uAlpha.value < 0.01) return;
+
+    this.tickAcc += delta;
+    const whole = Math.floor(this.tickAcc);
+    if (whole > 0) {
+      this.tickAcc -= whole;
+      tickSound.tick(whole);
+    }
   }
 }
