@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { createNoise3D } from "simplex-noise";
 import type { ScrollCamera } from "../../scroll-camera";
 
+import { SEED } from "../colors";
 const CAVE_RADIUS = 11.0;
 const NOISE_SCALE = 0.1;
 const NOISE_AMP = 12.0;
@@ -9,7 +10,6 @@ const NOISE_DETAIL = 4;
 const NOISE_ROUGHNESS = 0.55;
 const RING_STEP = 0.5;
 export const SEGMENTS = 64;
-const SEED = 7;
 
 function mulberry32(seed: number) {
   let s = seed >>> 0;
