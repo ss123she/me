@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { windSound } from "./audio";
 
 const WHEEL_SENSITIVITY = 0.0004;
 const TOUCH_SENSITIVITY = 0.001;
@@ -102,6 +103,8 @@ export class ScrollCamera {
   };
 
   public update(delta: number) {
+    const prev = this.current;
+
     const k = 1 - Math.exp(-delta * SMOOTHING);
     this.idle += delta;
     if (this.snapStops > 1 && this.idle > 0.18) {
@@ -111,6 +114,11 @@ export class ScrollCamera {
         (1 - Math.exp(-delta * 3));
     }
     this.current += (this.target - this.current) * k;
+
+    if (delta > 0) {
+      const speed = (Math.abs(this.current - prev) / delta) * 3.5;
+      windSound.update(speed);
+    }
 
     const mouseK = 1 - Math.exp(-delta * MOUSE_SMOOTHING);
     this.mouseCurrent.lerp(this.mouseTarget, mouseK);
