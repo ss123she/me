@@ -49,6 +49,9 @@ export class ScrollCamera {
   private readonly pos = new THREE.Vector3();
   private readonly tan = new THREE.Vector3();
 
+  private readonly forwardTarget = new THREE.Vector3();
+  private readonly cardTarget = new THREE.Vector3();
+
   private mouseTarget = new THREE.Vector2(0, 0);
   private mouseCurrent = new THREE.Vector2(0, 0);
 
@@ -81,6 +84,11 @@ export class ScrollCamera {
     window.addEventListener("touchmove", this.onTouchMove, { passive: false });
     window.addEventListener("keydown", this.onKey);
     window.addEventListener("mousemove", this.onMouseMove);
+
+    if (window.DeviceOrientationEvent && "ontouchstart" in window) {
+      window.addEventListener("deviceorientation", this.onDeviceOrientation);
+    }
+
     this.apply();
   }
 
@@ -90,6 +98,7 @@ export class ScrollCamera {
     window.removeEventListener("touchmove", this.onTouchMove);
     window.removeEventListener("keydown", this.onKey);
     window.removeEventListener("mousemove", this.onMouseMove);
+    window.removeEventListener("deviceorientation", this.onDeviceOrientation);
   }
 
   public onWindowResize() {
@@ -100,6 +109,12 @@ export class ScrollCamera {
   private onMouseMove = (e: MouseEvent) => {
     this.mouseTarget.x = (e.clientX / window.innerWidth) * 2 - 1;
     this.mouseTarget.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  };
+
+  private onDeviceOrientation = (e: DeviceOrientationEvent) => {
+    if (e.gamma === null || e.beta === null) return;
+    this.mouseTarget.x = THREE.MathUtils.clamp(e.gamma / 20, -1, 1);
+    this.mouseTarget.y = THREE.MathUtils.clamp((e.beta - 45) / 20, -1, 1);
   };
 
   public update(delta: number) {
@@ -169,9 +184,25 @@ export class ScrollCamera {
       .addScaledVector(this.right, this.mouseCurrent.x * MOUSE_STRENGTH_POS)
       .addScaledVector(this.camUp, this.mouseCurrent.y * MOUSE_STRENGTH_POS);
 
+    this.forwardTarget.copy(this.pos).addScaledVector(this.tan, LOOK_AHEAD);
+
+    if (this.snapStops > 1) {
+      const n = this.snapStops - 1;
+      const nearestIdx = Math.round(this.current * n);
+      const stopProgress = nearestIdx / n;
+
+      const cardU = this.archU(stopProgress);
+      this.path.getPointAt(cardU, this.cardTarget);
+
+      const distToStop = Math.abs(this.current - stopProgress) * n;
+      const focus = 1.0 - THREE.MathUtils.smoothstep(distToStop, 0.0, 0.35);
+
+      this.lookTarget.lerpVectors(this.forwardTarget, this.cardTarget, focus);
+    } else {
+      this.lookTarget.copy(this.forwardTarget);
+    }
+
     this.lookTarget
-      .copy(this.pos)
-      .addScaledVector(this.tan, LOOK_AHEAD)
       .addScaledVector(this.right, this.mouseCurrent.x * MOUSE_STRENGTH_LOOK)
       .addScaledVector(this.camUp, this.mouseCurrent.y * MOUSE_STRENGTH_LOOK);
 
