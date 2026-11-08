@@ -21,7 +21,6 @@ export const STOPS: Stop[] = [
     body: [
       "Mainly working with Rust, C#, and C++.",
       "Interested in low-level engineering, compute shaders, voxel engines, and creative coding.",
-      "Building open-source libraries and experimenting with custom runtimes.",
     ],
   },
   {
@@ -30,19 +29,19 @@ export const STOPS: Stop[] = [
     body: ["Key open-source projects:"],
     links: [
       {
-        label: "punctum - Compute shaders framework in pure Rust",
+        label: "punctum",
         url: "https://github.com/ss123she/punctum",
       },
       {
-        label: "yson-rs - YSON format parser/serializer in Rust",
+        label: "yson-rs",
         url: "https://github.com/ss123she/yson-rs",
       },
       {
-        label: "duckdb-derive - Derive workspace macros for DuckDB",
+        label: "duckdb-derive",
         url: "https://github.com/ss123she/duckdb-derive-workspace",
       },
       {
-        label: "lazymcp - MCP in Rust",
+        label: "lazymcp",
         url: "https://github.com/ss123she/lazymcp",
       },
     ],
@@ -50,7 +49,7 @@ export const STOPS: Stop[] = [
   {
     label: "Contacts",
     title: "/// Contacts",
-    body: ["Find more of my work and activity online:"],
+    body: ["Find more of me online:"],
     links: [
       { label: "GitHub", url: "https://github.com/ss123she" },
       {
